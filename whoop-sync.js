@@ -233,7 +233,7 @@ async function findExistingNotionEntry(date) {
     startOfDay.setHours(0, 0, 0, 0);
     
     const response = await notion.databases.query({
-      database_id: process.env.NOTION_DATABASE_ID,
+      database_id: process.env.WHOOP_NOTION_DATABASE_ID,
       filter: {
         property: 'Date',
         date: {
@@ -335,7 +335,7 @@ async function updateNotionWithWhoopData(whoopData) {
       }
 
       await notion.pages.create({
-        parent: { database_id: process.env.NOTION_DATABASE_ID },
+        parent: { database_id: process.env.WHOOP_NOTION_DATABASE_ID },
         properties
       });
 
