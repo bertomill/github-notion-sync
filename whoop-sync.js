@@ -18,14 +18,24 @@ async function getWhoopAccessToken() {
 }
 
 async function makeWhoopRequest(endpoint, accessToken) {
-  const response = await fetch(`${WHOOP_API_BASE}${endpoint}`, {
+  const url = `${WHOOP_API_BASE}${endpoint}`;
+  console.log(`🔗 Making request to: ${url}`);
+  console.log(`🔑 Using token: ${accessToken ? accessToken.substring(0, 20) + '...' : 'undefined'}`);
+  
+  const response = await fetch(url, {
     headers: {
       'Authorization': `Bearer ${accessToken}`,
       'Content-Type': 'application/json'
     }
   });
 
+  console.log(`📊 Response status: ${response.status} ${response.statusText}`);
+
   if (!response.ok) {
+    const errorText = await response.text();
+    console.log(`❌ API Error: ${response.status} ${response.statusText}`);
+    console.log(`❌ Error details: ${errorText}`);
+    console.log(`❌ Response headers:`, Object.fromEntries(response.headers.entries()));
     throw new Error(`Whoop API error: ${response.status} ${response.statusText}`);
   }
 
@@ -35,6 +45,23 @@ async function makeWhoopRequest(endpoint, accessToken) {
 async function getYesterdayWhoopData() {
   try {
     const accessToken = await getWhoopAccessToken();
+    
+    if (!accessToken) {
+      throw new Error('No access token available');
+    }
+    
+    console.log(`🔑 Using access token: ${accessToken.substring(0, 10)}...`);
+    
+    // Test the token first with a simple profile request
+    console.log('🧪 Testing access token...');
+    try {
+      await makeWhoopRequest('/v1/user/profile/basic', accessToken);
+      console.log('✅ Access token is valid');
+    } catch (testError) {
+      console.log('❌ Access token test failed:', testError.message);
+      console.log('💡 Token might be expired. You may need to regenerate it.');
+      throw new Error('Access token is invalid or expired');
+    }
     
     // Get yesterday's date range
     const yesterday = new Date();
@@ -47,7 +74,7 @@ async function getYesterdayWhoopData() {
     // Fetch sleep data
     console.log('🛌 Fetching sleep data...');
     const sleepData = await makeWhoopRequest(
-      `/v2/sleep?start=${startDate}&end=${endDate}`, 
+      `/v2/activity/sleep?start=${startDate}&end=${endDate}`, 
       accessToken
     );
 
@@ -69,43 +96,57 @@ async function getYesterdayWhoopData() {
     const processedData = {
       date: yesterday,
       sleepScore: null,
-      sleepDuration: null,
-      deepSleep: null,
-      remSleep: null,
       recoveryScore: null,
-      hrv: null,
-      restingHR: null,
-      strainScore: null
+      strainScore: null,
+      hrvRmssd: null,
+      restingHR: null
     };
+
+    console.log('🔍 Processing API responses...');
 
     // Process sleep data
     if (sleepData.records && sleepData.records.length > 0) {
       const sleep = sleepData.records[0];
-      processedData.sleepScore = sleep.score?.stage_summary?.score;
-      
-      if (sleep.score?.stage_summary) {
-        const stages = sleep.score.stage_summary;
-        processedData.sleepDuration = formatDuration(stages.total_in_bed_time_milli);
-        processedData.deepSleep = formatDuration(stages.deep_sleep_duration_milli);
-        processedData.remSleep = formatDuration(stages.rem_sleep_duration_milli);
+      console.log('Sleep data found:', sleep.score ? 'Yes' : 'No');
+      if (sleep.score) {
+        // Use sleep_performance_percentage as the main sleep score
+        processedData.sleepScore = sleep.score.sleep_performance_percentage;
+        console.log('  Sleep score:', processedData.sleepScore);
       }
     }
 
     // Process recovery data
     if (recoveryData.records && recoveryData.records.length > 0) {
       const recovery = recoveryData.records[0];
-      processedData.recoveryScore = recovery.score?.recovery_score;
-      processedData.hrv = recovery.score?.hrv_rmssd_milli;
-      processedData.restingHR = recovery.score?.resting_heart_rate;
+      console.log('Recovery data found:', recovery.score ? 'Yes' : 'No');
+      if (recovery.score) {
+        processedData.recoveryScore = recovery.score.recovery_score;
+        processedData.hrvRmssd = recovery.score.hrv_rmssd_milli;
+        processedData.restingHR = recovery.score.resting_heart_rate;
+        console.log('  Recovery score:', processedData.recoveryScore);
+        console.log('  HRV RMSSD:', processedData.hrvRmssd);
+        console.log('  Resting HR:', processedData.restingHR);
+      }
     }
 
     // Process cycle data (strain)
     if (cycleData.records && cycleData.records.length > 0) {
       const cycle = cycleData.records[0];
-      processedData.strainScore = cycle.score?.strain;
+      console.log('Cycle data found:', cycle.score ? 'Yes' : 'No');
+      if (cycle.score) {
+        processedData.strainScore = cycle.score.strain;
+        console.log('  Strain score:', processedData.strainScore);
+      }
     }
 
-    console.log('📊 Processed Whoop data:', processedData);
+    console.log('📊 Processed Whoop data:', {
+      sleepScore: processedData.sleepScore,
+      recoveryScore: processedData.recoveryScore,
+      strainScore: processedData.strainScore,
+      hrvRmssd: processedData.hrvRmssd,
+      restingHR: processedData.restingHR
+    });
+    
     return processedData;
 
   } catch (error) {
@@ -158,28 +199,19 @@ async function updateNotionWithWhoopData(whoopData) {
       
       const updateProperties = {};
       
-      if (whoopData.sleepScore !== null) {
+      if (whoopData.sleepScore !== null && whoopData.sleepScore !== undefined) {
         updateProperties.Sleep_Score = { number: whoopData.sleepScore };
       }
-      if (whoopData.recoveryScore !== null) {
+      if (whoopData.recoveryScore !== null && whoopData.recoveryScore !== undefined) {
         updateProperties.Recovery_Score = { number: whoopData.recoveryScore };
       }
-      if (whoopData.strainScore !== null) {
+      if (whoopData.strainScore !== null && whoopData.strainScore !== undefined) {
         updateProperties.Strain_Score = { number: whoopData.strainScore };
       }
-      if (whoopData.sleepDuration) {
-        updateProperties.Sleep_Duration = { rich_text: [{ text: { content: whoopData.sleepDuration } }] };
+      if (whoopData.hrvRmssd !== null && whoopData.hrvRmssd !== undefined) {
+        updateProperties.HRV_RMSSD = { number: whoopData.hrvRmssd };
       }
-      if (whoopData.deepSleep) {
-        updateProperties.Deep_Sleep = { rich_text: [{ text: { content: whoopData.deepSleep } }] };
-      }
-      if (whoopData.remSleep) {
-        updateProperties.REM_Sleep = { rich_text: [{ text: { content: whoopData.remSleep } }] };
-      }
-      if (whoopData.hrv !== null) {
-        updateProperties.HRV = { number: whoopData.hrv };
-      }
-      if (whoopData.restingHR !== null) {
+      if (whoopData.restingHR !== null && whoopData.restingHR !== undefined) {
         updateProperties.Resting_HR = { number: whoopData.restingHR };
       }
 
@@ -194,11 +226,11 @@ async function updateNotionWithWhoopData(whoopData) {
       console.log('📝 Creating new Notion entry with Whoop data...');
       
       const properties = {
-        'Repository': {
+        'Title': {
           title: [
             {
               text: {
-                content: `Daily Health - ${date.toDateString()}`
+                content: `Health Data - ${date.toDateString()}`
               }
             }
           ]
@@ -207,38 +239,28 @@ async function updateNotionWithWhoopData(whoopData) {
           date: {
             start: date.toISOString().split('T')[0]
           }
-        },
-        'Commits': { number: 0 } // Default value
+        }
       };
 
       // Add Whoop data properties
-      if (whoopData.sleepScore !== null) {
+      if (whoopData.sleepScore !== null && whoopData.sleepScore !== undefined) {
         properties.Sleep_Score = { number: whoopData.sleepScore };
       }
-      if (whoopData.recoveryScore !== null) {
+      if (whoopData.recoveryScore !== null && whoopData.recoveryScore !== undefined) {
         properties.Recovery_Score = { number: whoopData.recoveryScore };
       }
-      if (whoopData.strainScore !== null) {
+      if (whoopData.strainScore !== null && whoopData.strainScore !== undefined) {
         properties.Strain_Score = { number: whoopData.strainScore };
       }
-      if (whoopData.sleepDuration) {
-        properties.Sleep_Duration = { rich_text: [{ text: { content: whoopData.sleepDuration } }] };
+      if (whoopData.hrvRmssd !== null && whoopData.hrvRmssd !== undefined) {
+        properties.HRV_RMSSD = { number: whoopData.hrvRmssd };
       }
-      if (whoopData.deepSleep) {
-        properties.Deep_Sleep = { rich_text: [{ text: { content: whoopData.deepSleep } }] };
-      }
-      if (whoopData.remSleep) {
-        properties.REM_Sleep = { rich_text: [{ text: { content: whoopData.remSleep } }] };
-      }
-      if (whoopData.hrv !== null) {
-        properties.HRV = { number: whoopData.hrv };
-      }
-      if (whoopData.restingHR !== null) {
+      if (whoopData.restingHR !== null && whoopData.restingHR !== undefined) {
         properties.Resting_HR = { number: whoopData.restingHR };
       }
 
       await notion.pages.create({
-        parent: { database_id: process.env.NOTION_DATABASE_ID },
+        parent: { database_id: process.env.WHOOP_NOTION_DATABASE_ID },
         properties
       });
 
