@@ -12,6 +12,9 @@ const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
 
 async function getYesterdayCommits() {
   try {
+    // Debug: Check if we have authentication
+    console.log('GitHub token present:', !!process.env.GITHUB_TOKEN);
+    console.log('GitHub token starts with:', process.env.GITHUB_TOKEN ? process.env.GITHUB_TOKEN.substring(0, 4) + '...' : 'undefined');
     // Get yesterday's date in UTC to match GitHub's contribution graph
     const yesterday = new Date();
     yesterday.setUTCDate(yesterday.getUTCDate() - 1);
