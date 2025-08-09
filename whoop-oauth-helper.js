@@ -11,8 +11,8 @@ const REDIRECT_URI = 'http://localhost:3000/callback';
 const WHOOP_AUTH_URL = 'https://api.prod.whoop.com/oauth/oauth2/auth';
 const WHOOP_TOKEN_URL = 'https://api.prod.whoop.com/oauth/oauth2/token';
 
-// Using minimal scopes based on official docs
-const SCOPES = 'offline';
+// Include all necessary scopes for accessing user data
+const SCOPES = 'offline read:profile read:recovery read:cycles read:sleep read:workout';
 
 function startLocalServer() {
   return new Promise((resolve, reject) => {

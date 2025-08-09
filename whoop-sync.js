@@ -6,7 +6,7 @@ if (process.env.NODE_ENV !== 'production') {
   dotenv.config();
 }
 
-const notion = new Client({ auth: process.env.NOTION_TOKEN });
+const notion = new Client({ auth: process.env.WHOOP_NOTION_TOKEN || process.env.NOTION_TOKEN });
 
 // Whoop OAuth and API configuration
 const WHOOP_API_BASE = 'https://api.prod.whoop.com/developer';
@@ -31,9 +31,9 @@ async function refreshWhoopToken() {
   const refreshData = {
     grant_type: 'refresh_token',
     refresh_token: process.env.WHOOP_REFRESH_TOKEN,
-    client_id: process.env.WHOOP_CLIENT_ID || '2d48bb21-defd-49b6-89dd-a049c7cde3a5',
+    client_id: process.env.WHOOP_CLIENT_ID || 'ef2283d6-a0fd-400f-8883-2e71fd19fa79',
     client_secret: process.env.WHOOP_CLIENT_SECRET,
-    scope: 'offline'
+    scope: 'offline read:profile read:recovery read:cycles read:sleep read:workout'
   };
   
   try {
@@ -112,32 +112,32 @@ async function getYesterdayWhoopData() {
       throw new Error('Access token is invalid or expired');
     }
     
-    // Get yesterday's date range
+    // Get yesterday's date range in ISO 8601 format
     const yesterday = new Date();
     yesterday.setUTCDate(yesterday.getUTCDate() - 1);
-    const startDate = yesterday.toISOString().split('T')[0];
-    const endDate = startDate;
+    const startDate = yesterday.toISOString().split('T')[0] + 'T00:00:00.000Z';
+    const endDate = yesterday.toISOString().split('T')[0] + 'T23:59:59.999Z';
 
-    console.log(`Fetching Whoop data for ${startDate}`);
+    console.log(`Fetching Whoop data for ${yesterday.toISOString().split('T')[0]}`);
 
-    // Fetch sleep data
+    // Fetch sleep data using correct v1 endpoint
     console.log('🛌 Fetching sleep data...');
     const sleepData = await makeWhoopRequest(
-      `/v2/activity/sleep?start=${startDate}&end=${endDate}`, 
+      `/v1/activity/sleep?start=${encodeURIComponent(startDate)}&end=${encodeURIComponent(endDate)}&limit=25`, 
       accessToken
     );
 
-    // Fetch recovery data  
+    // Fetch recovery data using correct v1 endpoint
     console.log('🔋 Fetching recovery data...');
     const recoveryData = await makeWhoopRequest(
-      `/v2/recovery?start=${startDate}&end=${endDate}`, 
+      `/v1/recovery?start=${encodeURIComponent(startDate)}&end=${encodeURIComponent(endDate)}&limit=25`, 
       accessToken
     );
 
-    // Fetch cycle data (strain)
+    // Fetch cycle data (strain) using correct v1 endpoint
     console.log('💪 Fetching cycle/strain data...');
     const cycleData = await makeWhoopRequest(
-      `/v2/cycle?start=${startDate}&end=${endDate}`, 
+      `/v1/cycle?start=${encodeURIComponent(startDate)}&end=${encodeURIComponent(endDate)}&limit=25`, 
       accessToken
     );
 
@@ -148,7 +148,9 @@ async function getYesterdayWhoopData() {
       recoveryScore: null,
       strainScore: null,
       hrvRmssd: null,
-      restingHR: null
+      restingHR: null,
+      sleepDuration: null,
+      sleepEfficiency: null
     };
 
     console.log('🔍 Processing API responses...');
@@ -157,10 +159,20 @@ async function getYesterdayWhoopData() {
     if (sleepData.records && sleepData.records.length > 0) {
       const sleep = sleepData.records[0];
       console.log('Sleep data found:', sleep.score ? 'Yes' : 'No');
-      if (sleep.score) {
+      if (sleep.score && sleep.score.stage_summary) {
         // Use sleep_performance_percentage as the main sleep score
         processedData.sleepScore = sleep.score.sleep_performance_percentage;
+        processedData.sleepEfficiency = sleep.score.sleep_efficiency_percentage;
+        
+        // Calculate total sleep duration in hours
+        const totalSleepMs = sleep.score.stage_summary.total_light_sleep_time_milli + 
+                            sleep.score.stage_summary.total_slow_wave_sleep_time_milli + 
+                            sleep.score.stage_summary.total_rem_sleep_time_milli;
+        processedData.sleepDuration = Math.round((totalSleepMs / (1000 * 60 * 60)) * 10) / 10; // Hours with 1 decimal
+        
         console.log('  Sleep score:', processedData.sleepScore);
+        console.log('  Sleep efficiency:', processedData.sleepEfficiency);
+        console.log('  Sleep duration:', processedData.sleepDuration, 'hours');
       }
     }
 
@@ -193,7 +205,9 @@ async function getYesterdayWhoopData() {
       recoveryScore: processedData.recoveryScore,
       strainScore: processedData.strainScore,
       hrvRmssd: processedData.hrvRmssd,
-      restingHR: processedData.restingHR
+      restingHR: processedData.restingHR,
+      sleepDuration: processedData.sleepDuration,
+      sleepEfficiency: processedData.sleepEfficiency
     });
     
     return processedData;
@@ -263,6 +277,12 @@ async function updateNotionWithWhoopData(whoopData) {
       if (whoopData.restingHR !== null && whoopData.restingHR !== undefined) {
         updateProperties.Resting_HR = { number: whoopData.restingHR };
       }
+      if (whoopData.sleepDuration !== null && whoopData.sleepDuration !== undefined) {
+        updateProperties.Sleep_Duration = { number: whoopData.sleepDuration };
+      }
+      if (whoopData.sleepEfficiency !== null && whoopData.sleepEfficiency !== undefined) {
+        updateProperties.Sleep_Efficiency = { number: whoopData.sleepEfficiency };
+      }
 
       await notion.pages.update({
         page_id: existingEntry.id,
@@ -307,9 +327,15 @@ async function updateNotionWithWhoopData(whoopData) {
       if (whoopData.restingHR !== null && whoopData.restingHR !== undefined) {
         properties.Resting_HR = { number: whoopData.restingHR };
       }
+      if (whoopData.sleepDuration !== null && whoopData.sleepDuration !== undefined) {
+        properties.Sleep_Duration = { number: whoopData.sleepDuration };
+      }
+      if (whoopData.sleepEfficiency !== null && whoopData.sleepEfficiency !== undefined) {
+        properties.Sleep_Efficiency = { number: whoopData.sleepEfficiency };
+      }
 
       await notion.pages.create({
-        parent: { database_id: process.env.WHOOP_NOTION_DATABASE_ID },
+        parent: { database_id: process.env.NOTION_DATABASE_ID },
         properties
       });
 
