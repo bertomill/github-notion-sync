@@ -1,17 +1,19 @@
 {
   "name": "github-notion-sync",
   "version": "1.0.0",
-  "main": "index.js",
+  "description": "Sync daily GitHub commits to Notion",
+  "main": "sync.js",
+  "type": "module",
   "scripts": {
+    "start": "node sync.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
   "dependencies": {
-    "@notionhq/client": "^4.0.1",
-    "@octokit/rest": "^22.0.0",
-    "dotenv": "^17.2.1"
-  }
+    "@notionhq/client": "^2.2.3",
+    "@octokit/rest": "^20.0.2",
+    "dotenv": "^16.3.1"
+  },
+  "keywords": ["github", "notion", "automation", "commits"],
+  "author": "bertomill",
+  "license": "MIT"
 }

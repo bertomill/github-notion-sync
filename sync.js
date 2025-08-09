@@ -128,8 +128,4 @@ if (process.env.NODE_ENV !== 'production') {
   }
   
   // Run the script
-  if (require.main === module) {
-    main();
-  }
-  
-  module.exports = { main, getYesterdayCommits, addToNotion };
+  main();
