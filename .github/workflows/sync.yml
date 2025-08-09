@@ -1,32 +1,43 @@
+# This workflow automatically syncs your GitHub commits to a Notion database
 name: Sync GitHub Commits to Notion
 
+# Define when this workflow should run
 on:
   schedule:
-    # Runs daily at 6 AM UTC (2 AM EST / 1 AM EDT)
+    # This will run every day at 6 AM UTC (2 AM EST / 1 AM EDT)
+    # The cron format is: minute hour day month day-of-week
     - cron: '0 6 * * *'
-  workflow_dispatch:  # Allows manual triggering
+  workflow_dispatch:  # This allows you to run the workflow manually from GitHub's interface
 
+# Define the actual jobs to run
 jobs:
   sync:
+    # Use the latest version of Ubuntu to run this workflow
     runs-on: ubuntu-latest
     
+    # List the steps this job will perform
     steps:
+      # Step 1: Get a copy of your code
       - name: Checkout repository
         uses: actions/checkout@v4
         
+      # Step 2: Set up Node.js environment
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
-          cache: 'npm'
+          node-version: '18'  # Use Node.js version 18
+          cache: 'npm'        # Cache npm dependencies for faster installs
           
+      # Step 3: Install the project's dependencies
       - name: Install dependencies
         run: npm install
         
+      # Step 4: Run the sync script with necessary environment variables
       - name: Run sync script
         run: node sync.js
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
-          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
-          GITHUB_USERNAME: ${{ secrets.GITHUB_USERNAME }}
+          # These environment variables are stored as GitHub secrets
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}         # Used to access GitHub API
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}         # Used to access Notion API
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }} # ID of your Notion database
+          GITHUB_USERNAME: ${{ secrets.GITHUB_USERNAME }}    # Your GitHub username
