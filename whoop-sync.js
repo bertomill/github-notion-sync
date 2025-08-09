@@ -14,7 +14,56 @@ const WHOOP_API_BASE = 'https://api.prod.whoop.com/developer';
 async function getWhoopAccessToken() {
   // For now, we'll use a stored access token
   // Later we'll implement full OAuth flow
-  return process.env.WHOOP_ACCESS_TOKEN;
+  let accessToken = process.env.WHOOP_ACCESS_TOKEN;
+  
+  // If no access token, try to refresh using refresh token
+  if (!accessToken && process.env.WHOOP_REFRESH_TOKEN) {
+    console.log('🔄 No access token found, trying to refresh...');
+    accessToken = await refreshWhoopToken();
+  }
+  
+  return accessToken;
+}
+
+async function refreshWhoopToken() {
+  console.log('🔄 Refreshing Whoop access token...');
+  
+  const refreshData = {
+    grant_type: 'refresh_token',
+    refresh_token: process.env.WHOOP_REFRESH_TOKEN,
+    client_id: process.env.WHOOP_CLIENT_ID || '2d48bb21-defd-49b6-89dd-a049c7cde3a5',
+    client_secret: process.env.WHOOP_CLIENT_SECRET,
+    scope: 'offline'
+  };
+  
+  try {
+    const response = await fetch('https://api.prod.whoop.com/oauth/oauth2/token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams(refreshData)
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.log(`❌ Token refresh failed: ${response.status} ${response.statusText}`);
+      console.log(`❌ Error details: ${errorText}`);
+      throw new Error(`Token refresh failed: ${response.status} ${response.statusText}`);
+    }
+    
+    const tokenResponse = await response.json();
+    console.log('✅ Token refreshed successfully');
+    console.log(`🔑 New token: ${tokenResponse.access_token.substring(0, 20)}...`);
+    
+    // Note: In a real app, you'd save the new tokens
+    // For now, we'll just use the new access token
+    return tokenResponse.access_token;
+    
+  } catch (error) {
+    console.error('❌ Error refreshing token:', error.message);
+    throw error;
+  }
 }
 
 async function makeWhoopRequest(endpoint, accessToken) {
