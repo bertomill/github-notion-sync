@@ -1,287 +1,31 @@
-// Whoop to Notion sync script
-import dotenv from 'dotenv';
-import { Client } from '@notionhq/client';
+name: Sync Whoop Data to Notion
 
-if (process.env.NODE_ENV !== 'production') {
-  dotenv.config();
-}
+on:
+  schedule:
+    # Runs daily at 6:30 AM UTC (30 minutes after GitHub sync)
+    - cron: '30 6 * * *'
+  workflow_dispatch:  # Allows manual triggering
 
-const notion = new Client({ auth: process.env.NOTION_TOKEN });
-
-// Whoop OAuth and API configuration
-const WHOOP_API_BASE = 'https://api.prod.whoop.com/developer';
-
-async function getWhoopAccessToken() {
-  // For now, we'll use a stored access token
-  // Later we'll implement full OAuth flow
-  return process.env.WHOOP_ACCESS_TOKEN;
-}
-
-async function makeWhoopRequest(endpoint, accessToken) {
-  const url = `${WHOOP_API_BASE}${endpoint}`;
-  console.log(`🔗 Making request to: ${url}`);
-  
-  const response = await fetch(url, {
-    headers: {
-      'Authorization': `Bearer ${accessToken}`,
-      'Content-Type': 'application/json'
-    }
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    console.log(`❌ API Error: ${response.status} ${response.statusText}`);
-    console.log(`❌ Error details: ${errorText}`);
-    throw new Error(`Whoop API error: ${response.status} ${response.statusText}`);
-  }
-
-  return response.json();
-}
-
-async function getYesterdayWhoopData() {
-  try {
-    const accessToken = await getWhoopAccessToken();
+jobs:
+  sync:
+    runs-on: ubuntu-latest
     
-    if (!accessToken) {
-      throw new Error('No access token available');
-    }
-    
-    console.log(`🔑 Using access token: ${accessToken.substring(0, 10)}...`);
-    
-    // Get yesterday's date range
-    const yesterday = new Date();
-    yesterday.setUTCDate(yesterday.getUTCDate() - 1);
-    const startDate = yesterday.toISOString().split('T')[0];
-    const endDate = startDate;
-
-    console.log(`Fetching Whoop data for ${startDate}`);
-
-    // Fetch sleep data
-    console.log('🛌 Fetching sleep data...');
-    const sleepData = await makeWhoopRequest(
-      `/v2/activity/sleep?start=${startDate}&end=${endDate}`, 
-      accessToken
-    );
-
-    // Fetch recovery data  
-    console.log('🔋 Fetching recovery data...');
-    const recoveryData = await makeWhoopRequest(
-      `/v2/recovery?start=${startDate}&end=${endDate}`, 
-      accessToken
-    );
-
-    // Fetch cycle data (strain)
-    console.log('💪 Fetching cycle/strain data...');
-    const cycleData = await makeWhoopRequest(
-      `/v2/cycle?start=${startDate}&end=${endDate}`, 
-      accessToken
-    );
-
-    // Process and extract relevant data
-    const processedData = {
-      date: yesterday,
-      sleepScore: null,
-      recoveryScore: null,
-      strainScore: null,
-      hrvRmssd: null,
-      restingHR: null
-    };
-
-    console.log('🔍 Processing API responses...');
-
-    // Process sleep data
-    if (sleepData.records && sleepData.records.length > 0) {
-      const sleep = sleepData.records[0];
-      console.log('Sleep data found:', sleep.score ? 'Yes' : 'No');
-      if (sleep.score) {
-        // Use sleep_performance_percentage as the main sleep score
-        processedData.sleepScore = sleep.score.sleep_performance_percentage;
-        console.log('  Sleep score:', processedData.sleepScore);
-      }
-    }
-
-    // Process recovery data
-    if (recoveryData.records && recoveryData.records.length > 0) {
-      const recovery = recoveryData.records[0];
-      console.log('Recovery data found:', recovery.score ? 'Yes' : 'No');
-      if (recovery.score) {
-        processedData.recoveryScore = recovery.score.recovery_score;
-        processedData.hrvRmssd = recovery.score.hrv_rmssd_milli;
-        processedData.restingHR = recovery.score.resting_heart_rate;
-        console.log('  Recovery score:', processedData.recoveryScore);
-        console.log('  HRV RMSSD:', processedData.hrvRmssd);
-        console.log('  Resting HR:', processedData.restingHR);
-      }
-    }
-
-    // Process cycle data (strain)
-    if (cycleData.records && cycleData.records.length > 0) {
-      const cycle = cycleData.records[0];
-      console.log('Cycle data found:', cycle.score ? 'Yes' : 'No');
-      if (cycle.score) {
-        processedData.strainScore = cycle.score.strain;
-        console.log('  Strain score:', processedData.strainScore);
-      }
-    }
-
-    console.log('📊 Processed Whoop data:', {
-      sleepScore: processedData.sleepScore,
-      recoveryScore: processedData.recoveryScore,
-      strainScore: processedData.strainScore,
-      hrvRmssd: processedData.hrvRmssd,
-      restingHR: processedData.restingHR
-    });
-    
-    return processedData;
-
-  } catch (error) {
-    console.error('Error fetching Whoop data:', error);
-    throw error;
-  }
-}
-
-function formatDuration(milliseconds) {
-  if (!milliseconds) return null;
-  
-  const hours = Math.floor(milliseconds / (1000 * 60 * 60));
-  const minutes = Math.floor((milliseconds % (1000 * 60 * 60)) / (1000 * 60));
-  
-  return `${hours}h ${minutes}m`;
-}
-
-async function findExistingNotionEntry(date) {
-  try {
-    const startOfDay = new Date(date);
-    startOfDay.setHours(0, 0, 0, 0);
-    
-    const response = await notion.databases.query({
-      database_id: process.env.NOTION_DATABASE_ID,
-      filter: {
-        property: 'Date',
-        date: {
-          equals: startOfDay.toISOString().split('T')[0]
-        }
-      }
-    });
-
-    return response.results.length > 0 ? response.results[0] : null;
-  } catch (error) {
-    console.error('Error finding existing Notion entry:', error);
-    return null;
-  }
-}
-
-async function updateNotionWithWhoopData(whoopData) {
-  try {
-    const { date } = whoopData;
-    
-    // Check if entry already exists (from GitHub sync)
-    const existingEntry = await findExistingNotionEntry(date);
-    
-    if (existingEntry) {
-      // Update existing entry with Whoop data
-      console.log('📝 Updating existing Notion entry with Whoop data...');
-      
-      const updateProperties = {};
-      
-      if (whoopData.sleepScore !== null && whoopData.sleepScore !== undefined) {
-        updateProperties.Sleep_Score = { number: whoopData.sleepScore };
-      }
-      if (whoopData.recoveryScore !== null && whoopData.recoveryScore !== undefined) {
-        updateProperties.Recovery_Score = { number: whoopData.recoveryScore };
-      }
-      if (whoopData.strainScore !== null && whoopData.strainScore !== undefined) {
-        updateProperties.Strain_Score = { number: whoopData.strainScore };
-      }
-      if (whoopData.hrvRmssd !== null && whoopData.hrvRmssd !== undefined) {
-        updateProperties.HRV_RMSSD = { number: whoopData.hrvRmssd };
-      }
-      if (whoopData.restingHR !== null && whoopData.restingHR !== undefined) {
-        updateProperties.Resting_HR = { number: whoopData.restingHR };
-      }
-
-      await notion.pages.update({
-        page_id: existingEntry.id,
-        properties: updateProperties
-      });
-
-      console.log(`✅ Updated existing Notion entry with Whoop data for ${date.toDateString()}`);
-    } else {
-      // Create new entry with just Whoop data
-      console.log('📝 Creating new Notion entry with Whoop data...');
-      
-      const properties = {
-        'Title': {
-          title: [
-            {
-              text: {
-                content: `Health Data - ${date.toDateString()}`
-              }
-            }
-          ]
-        },
-        'Date': {
-          date: {
-            start: date.toISOString().split('T')[0]
-          }
-        }
-      };
-
-      // Add Whoop data properties
-      if (whoopData.sleepScore !== null && whoopData.sleepScore !== undefined) {
-        properties.Sleep_Score = { number: whoopData.sleepScore };
-      }
-      if (whoopData.recoveryScore !== null && whoopData.recoveryScore !== undefined) {
-        properties.Recovery_Score = { number: whoopData.recoveryScore };
-      }
-      if (whoopData.strainScore !== null && whoopData.strainScore !== undefined) {
-        properties.Strain_Score = { number: whoopData.strainScore };
-      }
-      if (whoopData.hrvRmssd !== null && whoopData.hrvRmssd !== undefined) {
-        properties.HRV_RMSSD = { number: whoopData.hrvRmssd };
-      }
-      if (whoopData.restingHR !== null && whoopData.restingHR !== undefined) {
-        properties.Resting_HR = { number: whoopData.restingHR };
-      }
-
-      await notion.pages.create({
-        parent: { database_id: process.env.WHOOP_NOTION_DATABASE_ID },
-        properties
-      });
-
-      console.log(`✅ Created new Notion entry with Whoop data for ${date.toDateString()}`);
-    }
-
-  } catch (error) {
-    console.error('Error updating Notion with Whoop data:', error);
-    throw error;
-  }
-}
-
-async function main() {
-  try {
-    console.log('🏃‍♂️ Starting Whoop to Notion sync...');
-    
-    const whoopData = await getYesterdayWhoopData();
-    
-    // Check if we have any data
-    const hasData = Object.values(whoopData).some(value => 
-      value !== null && value !== undefined && value !== whoopData.date
-    );
-    
-    if (!hasData) {
-      console.log('📭 No Whoop data found for yesterday');
-      return;
-    }
-
-    await updateNotionWithWhoopData(whoopData);
-    console.log('✨ Whoop sync completed successfully!');
-    
-  } catch (error) {
-    console.error('❌ Whoop sync failed:', error.message);
-    process.exit(1);
-  }
-}
-
-// Run the script
-main();
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          
+      - name: Install dependencies
+        run: npm install
+        
+      - name: Run Whoop sync script
+        run: node whoop-sync.js
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          WHOOP_NOTION_DATABASE_ID: ${{ secrets.WHOOP_NOTION_DATABASE_ID }}
+          WHOOP_ACCESS_TOKEN: ${{ secrets.WHOOP_ACCESS_TOKEN }}
